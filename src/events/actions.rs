@@ -28,6 +28,12 @@ pub enum Action {
     ScrollLogHome,
     ScrollLogEnd,
     ToggleTimestampMode,
+    StartSearch,
+    UpdateSearchQuery(String),
+    ExecuteSearch,
+    NextSearchResult,
+    PrevSearchResult,
+    CancelSearch,
     OpenMrInBrowser,
 
     // API Response Actions

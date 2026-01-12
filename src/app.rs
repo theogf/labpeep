@@ -29,6 +29,10 @@ pub struct App {
     pub log_scroll_offset: usize,
     pub log_job_name: Option<String>,
     pub timestamp_mode: TimestampDisplayMode,
+    pub search_query: String,
+    pub search_results: Vec<usize>, // Line numbers where matches are found
+    pub current_search_result: usize, // Index into search_results
+    pub is_searching: bool, // Whether in search input mode
 
     // Status
     pub status_message: Option<String>,
@@ -79,6 +83,10 @@ impl App {
             log_scroll_offset: 0,
             log_job_name: None,
             timestamp_mode: TimestampDisplayMode::Hidden,
+            search_query: String::new(),
+            search_results: Vec::new(),
+            current_search_result: 0,
+            is_searching: false,
             status_message,
             error_message: None,
             last_refresh: None,
@@ -177,8 +185,8 @@ impl App {
                             let pipeline_id = pipeline.id;
                             let needs_fetch = !mr.jobs.contains_key(&pipeline_id);
 
-                            // Now we can drop the borrow and modify self
-                            drop(mr);
+                            // Drop the borrow so we can modify self
+                            let _ = mr;
                             self.selected_job_index = 0;
 
                             if needs_fetch {
@@ -212,8 +220,8 @@ impl App {
                             let pipeline_id = pipeline.id;
                             let needs_fetch = !mr.jobs.contains_key(&pipeline_id);
 
-                            // Now we can drop the borrow and modify self
-                            drop(mr);
+                            // Drop the borrow so we can modify self
+                            let _ = mr;
                             self.selected_job_index = 0;
 
                             if needs_fetch {
@@ -367,6 +375,10 @@ impl App {
                 self.log_content = None;
                 self.log_job_name = None;
                 self.log_scroll_offset = 0;
+                self.search_query.clear();
+                self.search_results.clear();
+                self.current_search_result = 0;
+                self.is_searching = false;
                 None
             }
 
@@ -423,6 +435,72 @@ impl App {
                         TimestampDisplayMode::Full => TimestampDisplayMode::Hidden,
                     };
                 }
+                None
+            }
+
+            Action::StartSearch => {
+                if self.mode == AppMode::ViewingLog {
+                    self.is_searching = true;
+                    self.search_query.clear();
+                }
+                None
+            }
+
+            Action::UpdateSearchQuery(query) => {
+                if self.is_searching {
+                    self.search_query = query;
+                }
+                None
+            }
+
+            Action::ExecuteSearch => {
+                if let Some(content) = &self.log_content {
+                    self.search_results.clear();
+
+                    if !self.search_query.is_empty() {
+                        // Find all lines containing the search query (case-insensitive)
+                        let query_lower = self.search_query.to_lowercase();
+                        for (idx, line) in content.lines().enumerate() {
+                            if line.to_lowercase().contains(&query_lower) {
+                                self.search_results.push(idx);
+                            }
+                        }
+                    }
+
+                    self.is_searching = false;
+                    self.current_search_result = 0;
+
+                    // Jump to first result if any
+                    if !self.search_results.is_empty() {
+                        self.log_scroll_offset = self.search_results[0];
+                    }
+                }
+                None
+            }
+
+            Action::NextSearchResult => {
+                if !self.search_results.is_empty() && self.mode == AppMode::ViewingLog {
+                    self.current_search_result = (self.current_search_result + 1) % self.search_results.len();
+                    self.log_scroll_offset = self.search_results[self.current_search_result];
+                }
+                None
+            }
+
+            Action::PrevSearchResult => {
+                if !self.search_results.is_empty() && self.mode == AppMode::ViewingLog {
+                    self.current_search_result = if self.current_search_result == 0 {
+                        self.search_results.len() - 1
+                    } else {
+                        self.current_search_result - 1
+                    };
+                    self.log_scroll_offset = self.search_results[self.current_search_result];
+                }
+                None
+            }
+
+            Action::CancelSearch => {
+                self.is_searching = false;
+                self.search_query.clear();
                 None
             }
 

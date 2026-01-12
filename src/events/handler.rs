@@ -22,15 +22,20 @@ impl EventHandler {
         let input_tx = tx.clone();
         tokio::spawn(async move {
             loop {
-                if let Ok(true) = event::poll(Duration::from_millis(100)) {
-                    if let Ok(Event::Key(key)) = event::read() {
-                        if input_tx.send(AppEvent::Input(key)).is_err() {
-                            break;
+                // Poll with very short timeout for responsive input
+                if let Ok(true) = event::poll(Duration::from_millis(16)) {
+                    match event::read() {
+                        Ok(Event::Key(key)) => {
+                            if input_tx.send(AppEvent::Input(key)).is_err() {
+                                break;
+                            }
                         }
-                    } else if let Ok(Event::Resize(_, _)) = event::read() {
-                        if input_tx.send(AppEvent::Resize).is_err() {
-                            break;
+                        Ok(Event::Resize(_, _)) => {
+                            if input_tx.send(AppEvent::Resize).is_err() {
+                                break;
+                            }
                         }
+                        _ => {}
                     }
                 }
             }
@@ -98,19 +103,44 @@ pub fn map_event_to_action(event: AppEvent, app: &App) -> Action {
                 KeyCode::Char('d') => Action::RemoveCurrentMr,
                 _ => Action::None,
             },
-            AppMode::ViewingLog => match key.code {
-                KeyCode::Char('q') | KeyCode::Esc => Action::CloseLogViewer,
-                KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                    Action::Quit
+            AppMode::ViewingLog => {
+                // Handle search input mode
+                if app.is_searching {
+                    match key.code {
+                        KeyCode::Esc => Action::CancelSearch,
+                        KeyCode::Enter => Action::ExecuteSearch,
+                        KeyCode::Char(c) => {
+                            let mut query = app.search_query.clone();
+                            query.push(c);
+                            Action::UpdateSearchQuery(query)
+                        }
+                        KeyCode::Backspace => {
+                            let mut query = app.search_query.clone();
+                            query.pop();
+                            Action::UpdateSearchQuery(query)
+                        }
+                        _ => Action::None,
+                    }
+                } else {
+                    // Normal log viewing mode
+                    match key.code {
+                        KeyCode::Char('q') | KeyCode::Esc => Action::CloseLogViewer,
+                        KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                            Action::Quit
+                        }
+                        KeyCode::Up | KeyCode::Char('k') => Action::ScrollLogUp,
+                        KeyCode::Down | KeyCode::Char('j') => Action::ScrollLogDown,
+                        KeyCode::PageUp => Action::ScrollLogPageUp,
+                        KeyCode::PageDown => Action::ScrollLogPageDown,
+                        KeyCode::Home => Action::ScrollLogHome,
+                        KeyCode::End => Action::ScrollLogEnd,
+                        KeyCode::Char('t') => Action::ToggleTimestampMode,
+                        KeyCode::Char('/') => Action::StartSearch,
+                        KeyCode::Char('n') => Action::NextSearchResult,
+                        KeyCode::Char('N') => Action::PrevSearchResult,
+                        _ => Action::None,
+                    }
                 }
-                KeyCode::Up | KeyCode::Char('k') => Action::ScrollLogUp,
-                KeyCode::Down | KeyCode::Char('j') => Action::ScrollLogDown,
-                KeyCode::PageUp => Action::ScrollLogPageUp,
-                KeyCode::PageDown => Action::ScrollLogPageDown,
-                KeyCode::Home => Action::ScrollLogHome,
-                KeyCode::End => Action::ScrollLogEnd,
-                KeyCode::Char('t') => Action::ToggleTimestampMode,
-                _ => Action::None,
             },
             AppMode::SelectingMr => match key.code {
                 KeyCode::Esc => Action::None, // Exit selection mode

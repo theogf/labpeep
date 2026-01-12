@@ -116,6 +116,16 @@ pub fn render(f: &mut Frame, area: Rect) {
             Span::styled("t", Style::default().fg(Color::Cyan)),
             Span::raw(" - Toggle timestamp display (hidden/date/full)"),
         ]),
+        Line::from(vec![
+            Span::raw("  "),
+            Span::styled("/", Style::default().fg(Color::Cyan)),
+            Span::raw(" - Start search"),
+        ]),
+        Line::from(vec![
+            Span::raw("  "),
+            Span::styled("n/N", Style::default().fg(Color::Cyan)),
+            Span::raw(" - Next/previous search result"),
+        ]),
         Line::from(""),
         Line::from(vec![Span::styled(
             "Status Indicators:",

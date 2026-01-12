@@ -1,8 +1,8 @@
 use crate::app::{App, TimestampDisplayMode};
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
-    style::{Color, Style},
-    text::Line,
+    style::{Color, Modifier, Style},
+    text::{Line, Span},
     widgets::{Block, Borders, Clear, Paragraph, Wrap},
     Frame,
 };
@@ -10,6 +10,9 @@ use regex::Regex;
 
 /// Parse and format log line based on timestamp display mode
 fn process_log_line(line: &str, mode: &TimestampDisplayMode) -> String {
+    // First, strip GitLab CI log prefixes (00E, 00O, section markers, etc.)
+    let stripped_line = strip_gitlab_prefixes(line);
+
     // Regex to match ISO timestamps at the start of the line
     // Matches patterns like: 2024-01-15T10:30:45.123Z or 2024-01-15T10:30:45+00:00
     let re = Regex::new(r"^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2}:\d{2})(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})?\s+").unwrap();
@@ -17,30 +20,60 @@ fn process_log_line(line: &str, mode: &TimestampDisplayMode) -> String {
     match mode {
         TimestampDisplayMode::Hidden => {
             // Strip timestamp completely
-            re.replace(line, "").to_string()
+            re.replace(&stripped_line, "").to_string()
         }
         TimestampDisplayMode::DateOnly => {
             // Show only the date part
-            if let Some(caps) = re.captures(line) {
+            if let Some(caps) = re.captures(&stripped_line) {
                 let date = &caps[1];
-                let rest = &line[caps.get(0).unwrap().end()..];
+                let rest = &stripped_line[caps.get(0).unwrap().end()..];
                 format!("{} {}", date, rest)
             } else {
-                line.to_string()
+                stripped_line
             }
         }
         TimestampDisplayMode::Full => {
             // Show date and time (but not milliseconds/timezone)
-            if let Some(caps) = re.captures(line) {
+            if let Some(caps) = re.captures(&stripped_line) {
                 let date = &caps[1];
                 let time = &caps[2];
-                let rest = &line[caps.get(0).unwrap().end()..];
+                let rest = &stripped_line[caps.get(0).unwrap().end()..];
                 format!("{} {} {}", date, time, rest)
             } else {
-                line.to_string()
+                stripped_line
             }
         }
     }
+}
+
+/// Strip GitLab CI log prefixes like 00E, 00O, section markers, etc.
+fn strip_gitlab_prefixes(line: &str) -> String {
+    // GitLab uses special prefixes:
+    // - \x00[0-9A-F]{2} (null byte + 2 hex chars) for control codes
+    // - section_start:timestamp:name for collapsible sections
+    // - section_end:timestamp:name for section endings
+
+    let mut result = line;
+
+    // Strip null byte prefixes like \x0000E, \x0000O, etc.
+    // These show up as "00E", "00O" in the text
+    if result.starts_with("\x00") && result.len() >= 3 {
+        result = &result[3..]; // Skip null byte + 2 hex chars
+    } else if result.starts_with("00") && result.len() >= 3 {
+        // Sometimes they appear without the null byte
+        let third_char = result.chars().nth(2);
+        if matches!(third_char, Some('E') | Some('O') | Some('0'..='9') | Some('A'..='F') | Some('a'..='f')) {
+            result = &result[3..];
+        }
+    }
+
+    // Strip section markers
+    if result.starts_with("section_start:") || result.starts_with("section_end:") {
+        // These lines are typically used for collapsible sections, skip them entirely
+        return String::new();
+    }
+
+    result.to_string()
 }
 
 /// Helper function to create a centered rectangle
@@ -144,12 +177,40 @@ pub fn render(f: &mut Frame, app: &App, area: Rect) {
         TimestampDisplayMode::Full => "[Timestamps: Full]",
     };
 
+    // Build search indicator
+    let search_indicator = if !app.search_results.is_empty() {
+        format!(
+            " [Match {}/{}]",
+            app.current_search_result + 1,
+            app.search_results.len()
+        )
+    } else if !app.search_query.is_empty() && !app.is_searching {
+        " [No matches]".to_string()
+    } else {
+        String::new()
+    };
+
     let title = format!(
-        "Job Log: {}{}{} (q/Esc to close, ↑↓/jk scroll, t toggle time, PgUp/PgDn/Home/End)",
+        "Job Log: {}{}{}{} (q/Esc close, / search, n/N next/prev, t time)",
         job_name,
         if scroll_indicator.is_empty() { " " } else { &scroll_indicator },
-        timestamp_indicator
+        timestamp_indicator,
+        search_indicator
     );
+
+    // If searching, show search input bar at the bottom
+    let (render_area, search_area) = if app.is_searching {
+        let chunks = Layout::default()
+            .direction(ratatui::layout::Direction::Vertical)
+            .constraints([
+                Constraint::Min(0),
+                Constraint::Length(3),
+            ])
+            .split(log_area);
+        (chunks[0], Some(chunks[1]))
+    } else {
+        (log_area, None)
+    };
 
     let paragraph = Paragraph::new(visible_lines)
         .block(
@@ -160,5 +221,29 @@ pub fn render(f: &mut Frame, app: &App, area: Rect) {
         )
         .wrap(Wrap { trim: false });
 
-    f.render_widget(paragraph, log_area);
+    f.render_widget(paragraph, render_area);
+
+    // Render search input bar if in search mode
+    if let Some(search_area) = search_area {
+        let search_line = Line::from(vec![
+            Span::raw("Search: "),
+            Span::styled(
+                &app.search_query,
+                Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(
+                "█",
+                Style::default().fg(Color::White).add_modifier(Modifier::SLOW_BLINK),
+            ),
+        ]);
+
+        let search_paragraph = Paragraph::new(search_line).block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(" Enter to search, Esc to cancel ")
+                .style(Style::default().fg(Color::Cyan)),
+        );
+
+        f.render_widget(search_paragraph, search_area);
+    }
 }

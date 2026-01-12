@@ -13,7 +13,6 @@ pub fn render(f: &mut Frame, app: &App) {
             Constraint::Length(3),  // MR Tabs
             Constraint::Length(10), // Pipeline list
             Constraint::Min(10),    // Jobs table
-            Constraint::Length(2),  // Status bar
         ])
         .split(f.area());
 
@@ -26,8 +25,6 @@ pub fn render(f: &mut Frame, app: &App) {
     } else {
         components::job_list::render(f, app, chunks[2]);
     }
-
-    components::status_bar::render(f, app, chunks[3]);
 
     // Render help popup on top if in help mode
     if app.mode == AppMode::ShowingHelp {
