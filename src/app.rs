@@ -45,6 +45,7 @@ pub struct App {
     // Auto-refresh
     pub last_auto_refresh: Instant,
     pub auto_refresh_interval_minutes: u64,
+    pub refetch_notes_after_refresh: bool, // Flag to refetch notes after refresh completes
 }
 
 #[derive(Debug, Clone)]
@@ -103,6 +104,7 @@ impl App {
             last_refresh: None,
             last_auto_refresh: Instant::now(),
             auto_refresh_interval_minutes,
+            refetch_notes_after_refresh: false,
         }
     }
 
@@ -310,6 +312,9 @@ impl App {
                 // Reset auto-refresh timer on manual refresh
                 self.last_auto_refresh = Instant::now();
 
+                // Set flag to refetch notes after refresh if currently viewing comments
+                self.refetch_notes_after_refresh = self.mode == AppMode::ViewingComments;
+
                 // Clear all cached data including notes and job logs
                 for mr in &mut self.tracked_mrs {
                     mr.notes_loaded = false;
@@ -381,6 +386,17 @@ impl App {
                 if let Some(mr) = self.tracked_mrs.get_mut(mr_index) {
                     mr.pipelines = pipelines;
                     mr.loading = false;
+
+                    // Check if we need to refetch notes after refresh (only for selected MR)
+                    if self.refetch_notes_after_refresh && mr_index == self.selected_mr_index {
+                        self.refetch_notes_after_refresh = false;
+                        self.status_message = Some("Reloading comments...".to_string());
+                        return Some(Effect::FetchNotes {
+                            mr_index,
+                            project_id: self.project_id,
+                            mr_iid: mr.mr.iid,
+                        });
+                    }
 
                     // Fetch jobs for the latest pipeline
                     if let Some(pipeline) = mr.pipelines.first() {
@@ -622,6 +638,16 @@ impl App {
                     mr.notes = notes;
                     mr.notes_loaded = true;
                     mr.selected_note_index = 0;
+
+                    // After notes are loaded following a refresh, continue to fetch jobs
+                    if let Some(pipeline) = mr.pipelines.first() {
+                        self.status_message = None;
+                        return Some(Effect::FetchJobs {
+                            mr_index,
+                            project_id: self.project_id,
+                            pipeline_id: pipeline.id,
+                        });
+                    }
                 }
                 self.status_message = None;
                 None
@@ -677,6 +703,9 @@ impl App {
                 if elapsed >= refresh_interval {
                     // Trigger auto-refresh
                     self.last_auto_refresh = Instant::now();
+
+                    // Set flag to refetch notes after refresh if currently viewing comments
+                    self.refetch_notes_after_refresh = self.mode == AppMode::ViewingComments;
 
                     // Clear all cached data including notes and job logs
                     for mr in &mut self.tracked_mrs {
